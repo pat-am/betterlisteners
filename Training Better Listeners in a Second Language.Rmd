@@ -1,0 +1,103 @@
+---
+title: "Training Better Listeners in a Second Language"
+author: "Patricia Amillos"
+date: "2023-02-08"
+output:
+  html_document:
+    toc: yes
+    toc_depth: 3
+    toc_float: yes
+---
+
+```{r setup, include=FALSE}
+library(tidyverse)
+library(ggbeeswarm)
+```
+
+## Custom functions
+
+Throughout my experiments, I had to download CSV files with the same format multiple times and wrangle to get the relevant information. Instead of writing out the code repeatedly, I created a set of custom functions that would do all the processing for me so I can get to the analysis quicker. I share examples of these functions here.
+
+### Who is participating in my experiments?
+
+I have a csv file of survey data about the personal characteristics of my participants in long format. The data frame looks like this:
+
+```{r screening raw data}
+participants <- read.csv("screening.csv")
+head(participants)
+```
+### Function 1: Filtering the data
+Purpose: I need to save the same set of columns that contain the subject identifier, question, and responses for participant CSV files. Not all rows contain responses. I want to quickly extract these.
+
+Here is an example of how the responses are recorded.
+```{r show original column names}
+head(participants %>% select ('Question.Key', 'Response'))
+```
+
+The keep questions function applies the necessary filters so we only retain the required part of the data frame.
+```{r create keep questions function}
+keep_questions <- function (a) {
+  a %>%
+    select("Participant.Public.ID", "Question.Key", "Response") %>%
+    #select columns for subject identifier, rows that contain the questions, and their responses
+    set_names("ID", "question", "response") %>% #replace column names for readability and ease of referencing
+    filter(question != "BEGIN QUESTIONNAIRE" & question != "END QUESTIONNAIRE") #these rows contain no responses
+} 
+```
+
+By running the keep_questions function, we get a tidy data frame without pasting the same 4 lines of code repeatedly.
+```{r applying the keep questions function, warnings = FALSE}
+participants_clean <- keep_questions(participants)
+head(participants_clean)
+```
+### Function 2: Pivoting the data
+The participants_clean data set is in long format, but for the analysis I need the rows under the questions column to be column names. I wrote the "spread_df" function to pivot the data into the desired format.
+
+```{r creating the spread_df function}
+spread_df <- function (a) {
+  a %>% spread(question, response) %>% #converts the rows into a wide format with questions as column names
+    select("ID", "age", "response-1", "response-2", "response-3", "response-4") %>% #rows containing responses
+    set_names("ID", "age", "sex", "DLD", "hindi_exposure", "languages_spoken") %>% #renaming columns based on info asked
+    mutate_at("age", as.numeric) %>% # age is a numerical variable
+    mutate_at(c("ID", "sex", "DLD", "hindi_exposure", "languages_spoken"), as.factor) %>% #convert categorical data to factors 
+    mutate(languages_spoken = tolower(languages_spoken)) %>% # participants used different cases in the open text box
+    arrange(age) # sort the participants by ascending order to get idea of age range
+}
+```
+
+Because we sorted the data frame by age, we can quickly see that some participants didn't provide their age! That will be an important thing to handle in the next step.
+```{r applying the spread_df function, warnings = FALSE}
+participants_clean <- spread_df(participants_clean)
+head(participants_clean)
+```
+
+## Plotting
+One of the plots I made for this experiment was a beeswarm plot superimposed on a bar plot. The length of the bars represented the average performance of the group while the points in the beeswarm showed the average performance of participants.
+
+ggplot allows building plots step by step which makes for an interesting combination of visuals!
+
+```{r load data for plotting, include = FALSE}
+id <- read_csv("id.csv")
+
+# Fix the labels for this factor to descriptive labels for plotting and analysis
+id$minimalpair <- recode(id$minimalpair, "1" = 'minimal pair',
+                         "0" = 'non minimal pair')
+id$minimalpair <- factor(id$minimalpair, levels = c("non minimal pair", "minimal pair"))
+```
+
+```{r create summarized data for different parts of the plot}
+# Group at the individual level to display multiple points in a beeswarm
+id_beeswarm <- id %>%
+  group_by(ID, minimalpair) %>%
+  summarize(proportion_correct = mean(accuracy), std = sd(accuracy))
+
+# Combine the two into one plot
+(ggplot(id_beeswarm, aes(x=as.factor(minimalpair), y=proportion_correct)) +
+  geom_bar(stat = "summary", fun.y = "mean") + # mean as a summary function otherwise bars will show a count
+  ylim(0,1) +
+  ylab("proportion correct") +
+  xlab("trial type") +
+  geom_beeswarm(cex=2, size = 2) +
+  theme_bw())
+```
+
